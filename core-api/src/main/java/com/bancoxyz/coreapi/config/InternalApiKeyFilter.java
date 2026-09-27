@@ -20,15 +20,18 @@ public class InternalApiKeyFilter extends OncePerRequestFilter {
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
-                                     HttpServletResponse response,
-                                     FilterChain filterChain) throws ServletException, IOException {
+            HttpServletResponse response,
+            FilterChain filterChain) throws ServletException, IOException {
 
         String providedKey = request.getHeader(HEADER_NAME);
 
         if (providedKey == null || !providedKey.equals(expectedKey)) {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"Falta o es invalida la clave interna (X-Internal-Key)\"}");
+            response.setContentType("application/problem+json");
+            response.setCharacterEncoding("UTF-8");
+            response.getWriter().write("""
+                    {"type":"about:blank","title":"No autorizado","status":401,\
+                    "detail":"Falta o es inválida la clave interna (X-Internal-Key)"}""");
             return;
         }
 

@@ -2,6 +2,8 @@ package com.bancoxyz.coreapi.controller;
 
 import com.bancoxyz.coreapi.model.TransaccionDTO;
 import com.bancoxyz.coreapi.repository.TransaccionRepository;
+
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,7 +21,7 @@ public class TransaccionController {
     }
 
     @GetMapping
-    public List<TransaccionDTO> listar() {
-        return repository.findAll();
+    public ResponseEntity<List<TransaccionDTO>> listar() {
+        return ResponseEntity.ok(repository.findAll());
     }
 }

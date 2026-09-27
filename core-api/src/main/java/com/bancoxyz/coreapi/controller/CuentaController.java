@@ -4,6 +4,8 @@ import com.bancoxyz.coreapi.exception.CuentaNoEncontradaException;
 import com.bancoxyz.coreapi.model.CuentaInteresDTO;
 import com.bancoxyz.coreapi.model.RetiroRequest;
 import com.bancoxyz.coreapi.repository.CuentaInteresRepository;
+import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,21 +21,22 @@ public class CuentaController {
     }
 
     @GetMapping
-    public List<CuentaInteresDTO> listar() {
-        return repository.findAll();
+    public ResponseEntity<List<CuentaInteresDTO>> listar() {
+        return ResponseEntity.ok(repository.findAll());
     }
 
     @GetMapping("/{cuentaId}")
-    public CuentaInteresDTO obtener(@PathVariable Long cuentaId) {
+    public ResponseEntity<CuentaInteresDTO> obtener(@PathVariable Long cuentaId) {
         CuentaInteresDTO cuenta = repository.findByCuentaId(cuentaId);
         if (cuenta == null) {
             throw new CuentaNoEncontradaException("No existe la cuenta " + cuentaId);
         }
-        return cuenta;
+        return ResponseEntity.ok(cuenta);
     }
 
     @PatchMapping("/{cuentaId}/retiro")
-    public CuentaInteresDTO retirar(@PathVariable Long cuentaId, @RequestBody RetiroRequest request) {
-        return repository.retirar(cuentaId, request.monto());
+    public ResponseEntity<CuentaInteresDTO> retirar(@PathVariable Long cuentaId,
+                                                    @Valid @RequestBody RetiroRequest request) {
+        return ResponseEntity.ok(repository.retirar(cuentaId, request.monto()));
     }
 }
