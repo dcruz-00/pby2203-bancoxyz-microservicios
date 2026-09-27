@@ -60,4 +60,8 @@ public class CuentaInteresRepository {
 
         return findByCuentaId(cuentaId);
     }
+
+    public void devolver(Long cuentaId, Double monto) {
+        jdbcTemplate.update("UPDATE intereses_calculados SET saldo = saldo + ? WHERE cuenta_id = ?", monto, cuentaId);
+    }
 }
