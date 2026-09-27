@@ -4,6 +4,8 @@ import com.bancoxyz.coreapi.exception.CuentaNoEncontradaException;
 import com.bancoxyz.coreapi.model.CuentaInteresDTO;
 import com.bancoxyz.coreapi.model.RetiroRequest;
 import com.bancoxyz.coreapi.repository.CuentaInteresRepository;
+import com.bancoxyz.coreapi.service.RetiroService;
+
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,9 +17,11 @@ import java.util.List;
 public class CuentaController {
 
     private final CuentaInteresRepository repository;
+    private final RetiroService retiroService;
 
-    public CuentaController(CuentaInteresRepository repository) {
+    public CuentaController(CuentaInteresRepository repository, RetiroService retiroService) {
         this.repository = repository;
+        this.retiroService = retiroService;
     }
 
     @GetMapping
@@ -36,7 +40,10 @@ public class CuentaController {
 
     @PatchMapping("/{cuentaId}/retiro")
     public ResponseEntity<CuentaInteresDTO> retirar(@PathVariable Long cuentaId,
-                                                    @Valid @RequestBody RetiroRequest request) {
-        return ResponseEntity.ok(repository.retirar(cuentaId, request.monto()));
+            @Valid @RequestBody RetiroRequest request) {
+        RetiroService.Resultado resultado = retiroService.retirar(cuentaId, request.monto());
+        return ResponseEntity.ok()
+                .header("X-Id-Operacion", resultado.idOperacion().toString())
+                .body(resultado.cuenta());
     }
 }
