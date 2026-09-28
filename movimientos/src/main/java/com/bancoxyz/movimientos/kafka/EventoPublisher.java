@@ -3,7 +3,7 @@ package com.bancoxyz.movimientos.kafka;
 import com.bancoxyz.movimientos.config.KafkaTopics;
 import com.bancoxyz.movimientos.event.MovimientoFallidoEvent;
 import com.bancoxyz.movimientos.event.MovimientoRegistradoEvent;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -15,9 +15,9 @@ public class EventoPublisher {
     private static final Logger log = LoggerFactory.getLogger(EventoPublisher.class);
 
     private final KafkaTemplate<String, String> kafkaTemplate;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper objectMapper;
 
-    public EventoPublisher(KafkaTemplate<String, String> kafkaTemplate, ObjectMapper objectMapper) {
+    public EventoPublisher(KafkaTemplate<String, String> kafkaTemplate, JsonMapper objectMapper) {
         this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;
     }

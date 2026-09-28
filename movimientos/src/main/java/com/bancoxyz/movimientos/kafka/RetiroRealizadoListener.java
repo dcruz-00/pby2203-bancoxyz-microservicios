@@ -3,7 +3,7 @@ package com.bancoxyz.movimientos.kafka;
 import com.bancoxyz.movimientos.config.KafkaTopics;
 import com.bancoxyz.movimientos.event.RetiroRealizadoEvent;
 import com.bancoxyz.movimientos.service.MovimientoService;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -15,9 +15,9 @@ public class RetiroRealizadoListener {
     private static final Logger log = LoggerFactory.getLogger(RetiroRealizadoListener.class);
 
     private final MovimientoService movimientoService;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper objectMapper;
 
-    public RetiroRealizadoListener(MovimientoService movimientoService, ObjectMapper objectMapper) {
+    public RetiroRealizadoListener(MovimientoService movimientoService, JsonMapper objectMapper) {
         this.movimientoService = movimientoService;
         this.objectMapper = objectMapper;
     }
