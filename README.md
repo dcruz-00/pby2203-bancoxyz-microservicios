@@ -12,7 +12,7 @@ Simulación bancaria construida con microservicios Spring Boot que se comunican 
 | `service-registry` | 8761 | Registro y descubrimiento de servicios (Eureka) |
 | `core-api` | 8080 (HTTPS) | Cuentas y retiros. Inicia la saga y ejecuta la compensación |
 | `movimientos` | 8081 (HTTPS) | Registra cada retiro en su propia base de datos, con Retry de Resilience4j |
-| `compose.yaml` | — | Kafka 4.2 (KRaft) con los tópicos creados, y PostgreSQL de movimientos (puerto 5433) |
+| `docker-compose.yaml` | — | Kafka 4.2 (KRaft) con los tópicos creados, y PostgreSQL de movimientos (puerto 5433) |
 
 Tecnologías: Java 21, Spring Boot 4.1, Spring Cloud 2025.1, Spring Kafka 4.1, Resilience4j 2.3, Flyway, PostgreSQL 18 y Docker.
 
