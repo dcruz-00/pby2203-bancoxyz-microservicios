@@ -1,7 +1,7 @@
 package com.bancoxyz.coreapi.config;
 
-import com.bancoxyz.coreapi.exception.CuentaNoEncontradaException;
-import com.bancoxyz.coreapi.exception.SaldoInsuficienteException;
+import java.util.stream.Collectors;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -15,7 +15,11 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
-import java.util.stream.Collectors;
+import com.bancoxyz.coreapi.exception.CuentaNoEncontradaException;
+import com.bancoxyz.coreapi.exception.PublicacionEventoException;
+import com.bancoxyz.coreapi.exception.SaldoInsuficienteException;
+
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
@@ -32,6 +36,18 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return crear(HttpStatus.CONFLICT, "Saldo insuficiente", ex.getMessage());
     }
 
+    @ExceptionHandler(PublicacionEventoException.class)
+    public ProblemDetail manejarPublicacionFallida(PublicacionEventoException ex) {
+        return crear(HttpStatus.SERVICE_UNAVAILABLE, "Servicio temporalmente no disponible",
+                "No se pudo completar el retiro y no se realizó ningún cargo. Intenta nuevamente en unos minutos.");
+    }
+
+    @ExceptionHandler(CallNotPermittedException.class)
+    public ProblemDetail manejarCircuitoAbierto(CallNotPermittedException ex) {
+        return crear(HttpStatus.SERVICE_UNAVAILABLE, "Retiros suspendidos temporalmente",
+                "El servicio de retiros está suspendido por fallas recientes. No se realizó ningún cargo.");
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail manejarErrorInesperado(Exception ex) {
         log.error("Error no controlado", ex);
@@ -41,9 +57,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
-                                                                  HttpHeaders headers,
-                                                                  HttpStatusCode status,
-                                                                  WebRequest request) {
+            HttpHeaders headers,
+            HttpStatusCode status,
+            WebRequest request) {
         String detalle = ex.getBindingResult().getFieldErrors().stream()
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .collect(Collectors.joining("; "));

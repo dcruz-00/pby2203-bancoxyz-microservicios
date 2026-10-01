@@ -1,16 +1,16 @@
 package com.bancoxyz.coreapi.service;
 
+import com.bancoxyz.coreapi.exception.PublicacionEventoException;
 import com.bancoxyz.coreapi.model.CuentaInteresDTO;
 import com.bancoxyz.coreapi.model.RetiroRealizadoEvento;
 import com.bancoxyz.coreapi.repository.CuentaInteresRepository;
 import com.bancoxyz.coreapi.repository.OperacionRepository;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -18,31 +18,32 @@ import java.util.UUID;
 @Service
 public class RetiroService {
 
-    public static final String TOPICO_RETIRO_REALIZADO = "retiro-realizado";
-
     private static final Logger log = LoggerFactory.getLogger(RetiroService.class);
 
     private final CuentaInteresRepository cuentaRepository;
     private final OperacionRepository operacionRepository;
     private final TransactionTemplate transactionTemplate;
-    private final KafkaTemplate<String, String> kafkaTemplate;
-    private final JsonMapper jsonMapper;
+    private final RetiroEventoPublisher publisher;
 
     public RetiroService(CuentaInteresRepository cuentaRepository,
                          OperacionRepository operacionRepository,
                          PlatformTransactionManager transactionManager,
-                         KafkaTemplate<String, String> kafkaTemplate,
-                         JsonMapper jsonMapper) {
+                         RetiroEventoPublisher publisher) {
         this.cuentaRepository = cuentaRepository;
         this.operacionRepository = operacionRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
-        this.kafkaTemplate = kafkaTemplate;
-        this.jsonMapper = jsonMapper;
+        this.publisher = publisher;
     }
 
     public record Resultado(UUID idOperacion, CuentaInteresDTO cuenta) {
     }
 
+    /**
+     * Con el circuito abierto (Kafka caído de forma prolongada), el retiro se
+     * rechaza antes de tocar la base de datos: no se descuenta dinero que habría
+     * que devolver.
+     */
+    @CircuitBreaker(name = "retiro")
     public Resultado retirar(Long cuentaId, Double monto) {
         UUID idOperacion = UUID.randomUUID();
 
@@ -53,20 +54,22 @@ public class RetiroService {
             return actualizada;
         });
 
-        publicar(new RetiroRealizadoEvento(idOperacion.toString(), cuentaId, monto, Instant.now().toString()));
+        try {
+            publisher.publicar(new RetiroRealizadoEvento(
+                    idOperacion.toString(), cuentaId, monto, Instant.now().toString()));
+        } catch (PublicacionEventoException ex) {
+            // Agotados los reintentos: sin evento, movimientos nunca respondería,
+            // así que se compensa aquí mismo y el cliente recibe 503
+            compensar(idOperacion);
+            throw ex;
+        }
         return new Resultado(idOperacion, cuenta);
     }
 
-    private void publicar(RetiroRealizadoEvento evento) {
-        String json = jsonMapper.writeValueAsString(evento);
-        kafkaTemplate.send(TOPICO_RETIRO_REALIZADO, String.valueOf(evento.cuentaId()), json)
-                .whenComplete((resultado, error) -> {
-                    if (error != null) {
-                        log.error("No se pudo publicar retiro-realizado de la operación {}", evento.idOperacion(), error);
-                    } else {
-                        log.info("Publicado retiro-realizado: operación {}, partición {}",
-                                evento.idOperacion(), resultado.getRecordMetadata().partition());
-                    }
-                });
+    /** Misma compensación que aplica la saga ante movimiento-fallido. */
+    private void compensar(UUID idOperacion) {
+        transactionTemplate.executeWithoutResult(status -> operacionRepository.revertir(idOperacion)
+                .ifPresent(op -> cuentaRepository.devolver(op.cuentaId(), op.monto())));
+        log.warn("Operación {} REVERTIDA localmente: no se pudo publicar retiro-realizado", idOperacion);
     }
 }
