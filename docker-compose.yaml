@@ -161,6 +161,8 @@ services:
     depends_on:
       config-server:
         condition: service_healthy
+      auth-server:
+        condition: service_healthy
       service-registry:
         condition: service_healthy
       postgres-core:
@@ -170,7 +172,7 @@ services:
     restart: unless-stopped
     healthcheck:
       # -k: certificado autofirmado
-      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "-H", "X-Internal-Key: clave-interna-bancoxyz-2026", "https://localhost:8080/actuator/health"]
+      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "https://localhost:8080/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 12
