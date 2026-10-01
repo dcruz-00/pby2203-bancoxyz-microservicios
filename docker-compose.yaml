@@ -121,6 +121,30 @@ services:
       retries: 20
       start_period: 10s
 
+  auth-server:
+    build:
+      context: .
+      dockerfile: auth-server/Dockerfile
+    image: bancoxyz/auth-server
+    container_name: auth-server
+    ports:
+      - "9000:9000"
+    environment:
+      AUTH_ISSUER: http://auth-server:9000
+      EUREKA_URL: http://service-registry:8761/eureka/
+      EUREKA_HOSTNAME: auth-server
+    depends_on:
+      service-registry:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      # Metadatos públicos de OAuth: sano = ya puede emitir tokens
+      test: ["CMD", "curl", "-fs", "-o", "/dev/null", "http://localhost:9000/.well-known/oauth-authorization-server"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
   # ---------- Microservicios ----------
 
   core-api:
