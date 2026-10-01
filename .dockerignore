@@ -1,0 +1,13 @@
+# Compilados locales: la imagen compila desde el código fuente
+**/target/
+
+# Control de versiones e IDE
+.git/
+.gitignore
+.gitattributes
+.idea/
+.vscode/
+
+# No se usan dentro de las imágenes (evita invalidar la caché al editarlos)
+**/*.md
+docker-compose.yaml
