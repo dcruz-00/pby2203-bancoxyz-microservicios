@@ -179,7 +179,9 @@ services:
       start_period: 30s
 
   movimientos:
-    # Sin container_name ni puerto publicado: se puede escalar con --scale
+    container_name: movimientos
+    ports:
+      - "8081:8081"
     build:
       context: .
       dockerfile: movimientos/Dockerfile
@@ -196,9 +198,11 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+      auth-server:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "-H", "X-Internal-Key: clave-interna-bancoxyz-2026", "https://localhost:8081/actuator/health"]
+      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "https://localhost:8081/actuator/health"]
       interval: 10s
       timeout: 5s
       retries: 12
