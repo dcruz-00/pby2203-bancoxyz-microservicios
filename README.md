@@ -1,81 +1,167 @@
-# BancoXYZ: microservicios con arquitectura de eventos (Exp3 S7, Grupo 11)
+# BancoXYZ: microservicios seguros, resilientes y en contenedores (Exp3 S8)
+
+**Actividad sumativa individual.** Autor: Diego Cruz
+
+Este proyecto continúa el trabajo grupal del Grupo 11 en las semanas 6 y 7 (Config Server, Eureka, saga con Kafka y el microservicio movimientos). En la semana 8 se agregaron de forma individual:
+
+- Servidor de autorización **OAuth 2.0** (`auth-server`) y protección de core-api y movimientos como *resource servers*, con autorización por scopes.
+- **Imágenes Docker** de todos los servicios y un **`docker-compose.yaml`** que orquesta la solución completa.
+- **Resilience4j en core-api** (Retry, Circuit Breaker y compensación local), que cierra un hueco de consistencia en la publicación del retiro.
+- Endpoint de consulta en movimientos (`GET /api/movimientos`).
 
 ## Objetivo
 
-Simulación bancaria construida con microservicios Spring Boot que se comunican mediante eventos en Kafka. El caso implementado es el **retiro de dinero**: core-api descuenta el saldo y el microservicio movimientos lo registra en su propia base de datos. Si movimientos no puede registrarlo, core-api **compensa** devolviendo el monto. La solución demuestra mensajería asíncrona, tolerancia a fallos con Resilience4j y escalabilidad horizontal del consumidor.
+Simulación bancaria construida con microservicios Spring Boot que se comunican mediante eventos en Kafka. El caso implementado es el **retiro de dinero**: core-api descuenta el saldo y el microservicio movimientos lo registra en su propia base de datos; si movimientos no puede registrarlo, core-api **compensa** devolviendo el monto. Toda la solución corre en contenedores, el acceso a las APIs está protegido con OAuth 2.0 y ambos microservicios toleran la caída de sus dependencias.
 
-## Estructura del proyecto
+## Arquitectura
 
-| Módulo | Puerto | Responsabilidad |
+| Servicio | Puerto | Responsabilidad |
 |---|---|---|
-| `config-server` | 8888 | Configuración centralizada (Spring Cloud Config, perfil `native`, archivos en `config-repo/`) |
+| `config-server` | 8888 | Configuración centralizada (Spring Cloud Config, archivos en `config-repo/`, con perfil `docker`) |
 | `service-registry` | 8761 | Registro y descubrimiento de servicios (Eureka) |
+| `auth-server` | 9000 | Servidor de autorización OAuth 2.0: emite tokens JWT firmados |
 | `core-api` | 8080 (HTTPS) | Cuentas y retiros. Inicia la saga y ejecuta la compensación |
-| `movimientos` | 8081 (HTTPS) | Registra cada retiro en su propia base de datos, con Retry de Resilience4j |
-| `docker-compose.yaml` | — | Kafka 4.2 (KRaft) con los tópicos creados, y PostgreSQL de movimientos (puerto 5433) |
+| `movimientos` | 8081 (HTTPS) | Registra cada retiro en su propia base de datos y permite consultarlos |
+| `kafka` + `kafka-init` | 9092 | Kafka 4.2 (KRaft); `kafka-init` crea los tópicos y termina |
+| `postgres-core` | 5434 | Base de datos de core-api (`bancoxyz_core`) |
+| `postgres-movimientos` | 5433 | Base de datos de movimientos (`movimientos_db`) |
 
-Tecnologías: Java 21, Spring Boot 4.1, Spring Cloud 2025.1, Spring Kafka 4.1, Resilience4j 2.3, Flyway, PostgreSQL 18 y Docker.
+Los puertos indicados son los publicados en el equipo. Dentro de la red de Docker, cada servicio se alcanza por su nombre (por ejemplo, `kafka:29092` o `postgres-core:5432`).
 
-Cada microservicio tiene su propia base de datos: core-api usa `bancoxyz_core` (PostgreSQL local) y movimientos usa `movimientos_db` (PostgreSQL en Docker). Las tablas se crean con migraciones Flyway al arrancar cada servicio.
+Tecnologías: Java 21, Spring Boot 4.1, Spring Security 7 (servidor de autorización y resource server), Spring Cloud 2025.1, Spring Kafka 4.1, Resilience4j 2.3, Flyway, PostgreSQL 18 y Docker Compose.
 
-## Arquitectura de eventos
-
-### Patrón elegido: saga coreografiada con compensación
-
-Una **saga** reemplaza una transacción que abarca varios servicios por una secuencia de transacciones locales, una por servicio, conectadas por eventos. Si un paso falla, se ejecuta una **transacción compensatoria** que deshace lo hecho en los pasos anteriores. En la variante **coreografiada**, no hay un servicio central que dirija el flujo: cada servicio reacciona a los eventos que le interesan y publica los suyos.
-
-**Por qué este patrón para el retiro:**
-
-- **El retiro involucra dos servicios con bases de datos separadas.** core-api descuenta el saldo en `bancoxyz_core` y movimientos registra el movimiento en `movimientos_db`. No existe una transacción de base de datos que abarque ambas, así que la consistencia se logra con compensación: si movimientos no puede registrar el retiro, core-api devuelve el monto.
-- **Coreografía en vez de orquestación.** Con dos servicios y un solo flujo, un orquestador sería un servicio adicional sin beneficio real. La desventaja de la coreografía es que el flujo se vuelve difícil de seguir cuando crece; con este tamaño no es un problema.
-- **Kafka como canal.** Los eventos quedan guardados: si movimientos está caído, el retiro no se pierde y se procesa cuando vuelve. Las particiones y los grupos de consumidores permiten repartir la carga entre varias instancias de movimientos.
-
-**Por qué no Event Sourcing:** obligaría a reconstruir el saldo de cada cuenta a partir de sus eventos, lo que implica rediseñar cómo core-api guarda las cuentas. Para coordinar un retiro entre dos servicios, la saga resuelve el problema con un cambio mucho menor.
-
-### Flujo
-
-| # | Paso | Servicio |
-|---|---|---|
-| 1 | Descuenta el saldo, guarda la operación como `PENDIENTE` y publica `retiro-realizado` | core-api |
-| 2 | Registra el movimiento en su base de datos | movimientos |
-| 3a | Si lo logra, publica `movimiento-registrado`, y core-api marca la operación como `CONFIRMADA` | movimientos → core-api |
-| 3b | Si falla tras agotar los reintentos, publica `movimiento-fallido`, y core-api **devuelve el monto** y marca la operación como `REVERTIDA` | movimientos → core-api |
-
-core-api solo cambia el estado de una operación si sigue `PENDIENTE`. Así, si un evento llega repetido, se ignora y el monto nunca se devuelve dos veces. movimientos, por su parte, descarta los retiros duplicados usando el id de operación como clave única.
-
-### Diagrama
+Cada microservicio tiene su propia base de datos. Las tablas se crean y los datos iniciales se cargan con migraciones Flyway al arrancar cada servicio.
 
 ```mermaid
-flowchart TB
-    Cliente([Cliente HTTP]) -- "PATCH /api/cuentas/{id}/retiro" --> CoreAPI
+flowchart LR
+    Cliente([Cliente HTTP])
+
+    subgraph plataforma["Plataforma"]
+        Auth[auth-server<br/>OAuth 2.0]
+        Config[config-server]
+        Eureka[service-registry]
+    end
 
     subgraph core["core-api"]
-        CoreAPI[core-api<br/>débito y compensación]
-        DBCore[(bancoxyz_core<br/>cuentas y operaciones)]
+        CoreAPI[core-api<br/>débito, compensación<br/>Retry + Circuit Breaker]
+        DBCore[(bancoxyz_core)]
     end
 
     subgraph kafka["Kafka"]
-        T1[[retiro-realizado<br/>3 particiones]]
+        T1[[retiro-realizado]]
         T2[[movimiento-registrado]]
         T3[[movimiento-fallido]]
     end
 
-    subgraph mov["movimientos: hasta 3 instancias, grupo movimientos"]
+    subgraph mov["movimientos"]
         Mov[movimientos<br/>registro con Retry]
         DBMov[(movimientos_db)]
     end
+
+    Cliente -- "1. client_credentials" --> Auth
+    Cliente -- "2. Bearer JWT" --> CoreAPI
+    Cliente -- "Bearer JWT" --> Mov
+    CoreAPI -. "claves públicas" .-> Auth
+    Mov -. "claves públicas" .-> Auth
 
     CoreAPI <--> DBCore
     CoreAPI -- publica --> T1
     T1 -- consume --> Mov
     Mov <--> DBMov
     Mov -- registro exitoso --> T2
-    Mov -. reintentos agotados .-> T3
+    Mov -- reintentos agotados --> T3
     T2 -- CONFIRMADA --> CoreAPI
-    T3 -. "REVERTIDA: devuelve el monto" .-> CoreAPI
+    T3 -- "REVERTIDA: devuelve el monto" --> CoreAPI
 ```
 
-Las líneas punteadas son el camino de la compensación.
+core-api y movimientos obtienen su configuración del Config Server y se registran en Eureka; esas conexiones se omiten en el diagrama para que sea legible.
+
+## Seguridad: OAuth 2.0
+
+### Flujo
+
+Se usa el flujo **client credentials**, el que corresponde a comunicación entre sistemas sin un usuario final que inicie sesión (la solución no tiene interfaz de usuario):
+
+1. El cliente se autentica ante `auth-server` con su id y secreto, y pide los scopes que necesita.
+2. `auth-server` emite un **JWT firmado** (RS256) con los scopes autorizados y 5 minutos de vigencia.
+3. El cliente llama a core-api o movimientos con la cabecera `Authorization: Bearer <token>`.
+4. Cada microservicio valida el token **por sí solo**: la firma (con las claves públicas que publica `auth-server`), la vigencia, el emisor y los scopes. Los microservicios nunca conocen los secretos de los clientes.
+
+`auth-server` no tiene clases de configuración: Spring Boot autoconfigura el servidor de autorización a partir de las propiedades de `auth-server/src/main/resources/application.properties`, donde están registrados los clientes.
+
+### Clientes y scopes
+
+| Cliente | Representa | Scopes |
+|---|---|---|
+| `cliente-consulta` | Aplicación de solo lectura (reportes) | `cuentas.leer`, `movimientos.leer` |
+| `cliente-cajero` | Canal que opera dinero | `cuentas.leer`, `cuentas.retirar` |
+| `cliente-monitoreo` | Operaciones | `monitoreo` |
+
+Cada cliente recibe solo los permisos que su función requiere (mínimo privilegio): el cajero puede retirar pero no consultar movimientos, y la aplicación de reportes puede leer pero no retirar. `auth-server` rechaza (`invalid_scope`) cualquier solicitud de un scope que el cliente no tiene asignado.
+
+### Reglas de acceso
+
+| Servicio | Endpoint | Exige |
+|---|---|---|
+| core-api | `GET /api/cuentas`, `GET /api/cuentas/{id}`, `GET /api/transacciones` | `cuentas.leer` |
+| core-api | `PATCH /api/cuentas/{id}/retiro` | `cuentas.retirar` |
+| movimientos | `GET /api/movimientos?cuentaId={id}`, `GET /api/movimientos/{idOperacion}` | `movimientos.leer` |
+| ambos | `/actuator/health` | Público (lo usan los healthchecks de Docker); los detalles solo con `monitoreo` |
+| ambos | `/actuator/info`, `/actuator/metrics` | `monitoreo` |
+| ambos | Cualquier otra ruta | Denegada |
+
+| Situación | Respuesta |
+|---|---|
+| Sin token, o token vencido, mal formado o con firma inválida | `401` con cabecera `WWW-Authenticate: Bearer` |
+| Token válido pero sin el scope requerido | `403` con `error="insufficient_scope"` |
+
+Las reglas se definen por URL en la cadena de filtros de Spring Security (`SecurityConfig` de cada servicio), no con `@PreAuthorize`. Así, una denegación se resuelve en el filtro de seguridad, antes de llegar al controlador; en core-api esto es necesario porque `GlobalExceptionHandler` atrapa toda `Exception` y convertiría una denegación lanzada en el controlador en un error 500.
+
+### Emisor fijo de los tokens
+
+Cada JWT incluye su emisor (`iss`), y los microservicios lo comparan con el que tienen configurado. Por defecto, el emisor depende de la URL con que se pidió el token: desde el equipo sería `http://localhost:9000`, pero dentro de la red de Docker el servidor se llama `auth-server:9000`, y la validación fallaría. Por eso el emisor está **fijado explícitamente**: `http://auth-server:9000` en Docker (variable `AUTH_ISSUER`) y `http://localhost:9000` en ejecución local. Así, un token pedido desde el equipo es aceptado por los microservicios dentro de Docker.
+
+## Contenedores
+
+### Imágenes
+
+Cada servicio tiene su `Dockerfile` en su carpeta, con el mismo esquema:
+
+- **Construcción en dos etapas.** La primera compila con JDK 21 y el wrapper de Maven del proyecto (misma versión de Maven que en desarrollo); la segunda contiene solo el JRE 21 y el JAR. El JDK, Maven y el código fuente no quedan en la imagen final.
+- **Caché de dependencias.** El `pom.xml` se copia y sus dependencias se descargan en una capa propia, antes del código: cambiar una clase no vuelve a descargar las dependencias.
+- **Usuario sin privilegios.** El proceso no corre como root.
+
+El contexto de construcción es la raíz del repositorio (para usar el wrapper de Maven); `.dockerignore` excluye compilados, Git y archivos del IDE.
+
+### Orquestación (`docker-compose.yaml`)
+
+- **Construye y levanta todo con un comando**, incluidas las bases de datos y Kafka.
+- **Orden de arranque con healthchecks reales**, no solo "contenedor iniciado": core-api y movimientos esperan a que el Config Server sirva configuración, Eureka responda, `auth-server` publique sus metadatos OAuth, su base de datos acepte conexiones y `kafka-init` haya creado los tópicos.
+- **Reinicio automático** (`restart: unless-stopped`) de los servicios Spring ante una caída.
+- **Configuración específica de Docker en el Config Server**: los archivos `*-docker.properties` del `config-repo` sobrescriben solo lo que cambia dentro de la red (direcciones de base de datos, Kafka, Eureka y emisor de tokens). La URL del Config Server se recibe por la variable `CONFIG_SERVER_URL`, con `localhost` como valor por defecto, de modo que el mismo código también corre fuera de Docker.
+
+## Arquitectura de eventos
+
+### Patrón elegido: saga coreografiada con compensación
+
+Una **saga** reemplaza una transacción que abarca varios servicios por una secuencia de transacciones locales, una por servicio, conectadas por eventos. Si un paso falla, se ejecuta una **transacción compensatoria** que deshace lo hecho en los pasos anteriores. En la variante **coreografiada** no hay un servicio central que dirija el flujo: cada servicio reacciona a los eventos que le interesan y publica los suyos.
+
+- **El retiro involucra dos servicios con bases de datos separadas**, así que no existe una transacción que abarque ambas; la consistencia se logra con compensación.
+- **Coreografía en vez de orquestación:** con dos servicios y un solo flujo, un orquestador sería un servicio adicional sin beneficio real. La desventaja de la coreografía es que el flujo se vuelve difícil de seguir cuando crece; con este tamaño no es un problema.
+- **Kafka como canal:** los eventos quedan guardados; si movimientos está caído, el retiro no se pierde y se procesa cuando vuelve.
+
+**Por qué no Event Sourcing:** obligaría a reconstruir el saldo de cada cuenta a partir de sus eventos y a rediseñar cómo core-api guarda las cuentas. Para coordinar un retiro entre dos servicios, la saga resuelve el problema con un cambio mucho menor.
+
+### Flujo
+
+| # | Paso | Servicio |
+|---|---|---|
+| 1 | Descuenta el saldo, guarda la operación como `PENDIENTE` y publica `retiro-realizado` (esperando la confirmación de Kafka) | core-api |
+| 2 | Registra el movimiento en su base de datos | movimientos |
+| 3a | Si lo logra, publica `movimiento-registrado`, y core-api marca la operación como `CONFIRMADA` | movimientos → core-api |
+| 3b | Si falla tras agotar los reintentos, publica `movimiento-fallido`, y core-api **devuelve el monto** y marca la operación como `REVERTIDA` | movimientos → core-api |
+
+core-api solo cambia el estado de una operación si sigue `PENDIENTE`: si un evento llega repetido, se ignora y el monto nunca se devuelve dos veces. movimientos descarta los retiros duplicados usando el id de operación como clave única.
 
 ### Tópicos y eventos
 
@@ -85,11 +171,13 @@ Las líneas punteadas son el camino de la compensación.
 | `movimiento-registrado` | 1 | movimientos | core-api | Los mismos campos |
 | `movimiento-fallido` | 1 | movimientos | core-api | Los mismos campos, más `motivo` |
 
-La clave de cada mensaje es el id de cuenta, para que los eventos de una misma cuenta se procesen en orden. El JSON viaja como texto y cada servicio lo convierte a su propia clase.
+La clave de cada mensaje es el id de cuenta, para que los eventos de una misma cuenta se procesen en orden.
 
 ## Tolerancia a fallos (Resilience4j)
 
-movimientos guarda cada movimiento protegido por un **Retry de Resilience4j** (`@Retry`). Los parámetros están en `config-repo/movimientos.properties`, no en el código:
+Todos los parámetros están en el `config-repo`, no en el código.
+
+### movimientos: Retry al registrar
 
 | Parámetro | Valor | Motivo |
 |---|---|---|
@@ -98,95 +186,107 @@ movimientos guarda cada movimiento protegido por un **Retry de Resilience4j** (`
 | `retry-exceptions` | `DataAccessException` | Solo se reintentan errores de acceso a datos, que suelen ser transitorios |
 | `ignore-exceptions` | `DataIntegrityViolationException` | Un error de integridad es de datos y no se resuelve reintentando |
 
-Cuando se agotan los intentos, el método de *fallback* publica `movimiento-fallido` y core-api compensa el retiro.
+Al agotarse los intentos, el *fallback* publica `movimiento-fallido` y core-api compensa el retiro.
 
-**Prueba realizada** (evidencias, figuras 6 y 7): con el PostgreSQL de movimientos detenido, cada retiro se intenta registrar tres veces (unos 7 segundos entre intentos: 5 del timeout de conexión del pool más 2 de pausa). Luego se publica `movimiento-fallido` y core-api devuelve el monto y marca la operación como `REVERTIDA`. Al levantar la base de datos, los retiros vuelven a confirmarse normalmente.
+### core-api: Retry, Circuit Breaker y compensación local al publicar
+
+**Problema que resuelve.** Antes, core-api publicaba `retiro-realizado` sin esperar el resultado. Si Kafka estaba caído, el saldo quedaba descontado, la operación quedaba `PENDIENTE` para siempre (movimientos nunca se enteraba, así que tampoco había compensación) y el cliente recibía `200`.
+
+| Mecanismo | Comportamiento | Para qué falla |
+|---|---|---|
+| Publicación con tiempo máximo | Se espera la confirmación de Kafka; los tiempos del productor se acotaron (por defecto puede bloquear hasta 60 s) | Base de lo demás: sin saber si se publicó, no hay nada que reintentar ni compensar |
+| **Retry** (`publicarRetiro`) | 3 intentos con 500 ms de pausa | Fallas transitorias (un corte breve de red, un broker que se reinicia) |
+| **Compensación local** | Si se agotan los intentos, la operación pasa a `REVERTIDA`, el monto se devuelve y el cliente recibe `503` indicando que no se hizo ningún cargo | Que no quede dinero descontado sin evento |
+| **Circuit Breaker** (`retiro`) | Tras fallas repetidas se abre: los retiros se rechazan con `503` de inmediato, **sin tocar la base de datos** | Caídas prolongadas: no descontar dinero que habrá que devolver, ni hacer esperar ~7 s a cada cliente |
+
+Parámetros del Circuit Breaker: ventana de las últimas 4 llamadas, evaluada desde la segunda; se abre con un **60 %** de fallas; permanece abierto 20 s y luego pasa solo a semiabierto, donde deja pasar 2 retiros de prueba. Solo cuentan como falla los problemas de publicación: saldo insuficiente o cuenta inexistente son respuestas de negocio válidas. Los valores son pequeños para que el comportamiento sea observable en una demostración; en producción las ventanas serían mayores.
+
+El umbral es 60 % y no 50 % porque, con una ventana tan pequeña, una sola falla seguida de un éxito (`[falla, éxito]` = 50 %) abriría el circuito justo cuando la dependencia ya se recuperó.
+
+Cada cambio de estado del circuito queda en el log de core-api (`Circuit breaker 'retiro': State transition from CLOSED to OPEN`, etc.).
+
+**Prueba realizada:** con Kafka detenido, los dos primeros retiros respondieron `503` tras los reintentos (~7–10 s) y sus operaciones quedaron `REVERTIDA`; el circuito se abrió y el tercer retiro se rechazó en milisegundos sin crear ninguna operación. Al levantar Kafka, el circuito pasó a semiabierto, los retiros de prueba resultaron exitosos y se cerró. El saldo solo disminuyó por los retiros confirmados.
 
 ## Escalabilidad
 
-El tópico `retiro-realizado` tiene **3 particiones**. Todas las instancias de movimientos pertenecen al mismo grupo de consumidores (`movimientos`), así que Kafka reparte las particiones entre ellas y cada evento lo procesa una sola instancia.
+El tópico `retiro-realizado` tiene **3 particiones** y todas las instancias de movimientos pertenecen al mismo grupo de consumidores, así que Kafka reparte las particiones entre ellas y cada evento lo procesa una sola instancia. Se comprobó levantando dos réplicas con `docker compose up -d --scale movimientos=2`: Kafka asignó dos particiones a una y una a la otra.
 
-**Prueba realizada** (evidencias, figuras 8 y 9): se levantaron tres instancias de movimientos (puertos 8081, 8082 y 8083), las tres registradas en Eureka. Kafka asignó una partición distinta a cada una. Al hacer retiros sobre varias cuentas, dos instancias procesaron eventos en paralelo: una la partición 2 (cuentas 101 y 103) y otra la partición 0 (cuentas 102, 107 y 108).
-
-La partición 1 quedó sin mensajes porque Kafka asigna la partición según un hash de la clave (el id de cuenta), y ninguna de las seis cuentas existentes cae en ella. Es el comportamiento esperado del reparto por clave: con más cuentas, la tercera instancia también recibiría carga.
+En el `docker-compose.yaml` entregado, movimientos publica el puerto fijo 8081 para tener una dirección estable. Para escalarlo hay que quitar `container_name` y la publicación del puerto (las réplicas siguen consumiendo de Kafka; solo dejan de ser accesibles desde el equipo). Se descartó publicar un rango de puertos porque Docker no asigna siempre el mismo puerto a la misma réplica.
 
 ## Cómo ejecutar
 
 ### Requisitos
 
-Java 21, PostgreSQL (probado con la versión 18) y Docker.
+Docker con Docker Compose. No se necesita Java ni PostgreSQL instalados.
 
-### 1. Crear la base de datos de core-api (una sola vez)
+### Levantar
 
-Flyway crea las tablas y carga los datos al arrancar core-api, pero no puede crear la base de datos misma.
-
-**Linux:**
+Desde la raíz del repositorio:
 
 ```bash
-sudo -u postgres psql -c "CREATE USER core_user WITH PASSWORD 'core2026';"
-sudo -u postgres psql -c "CREATE DATABASE bancoxyz_core OWNER core_user;"
+docker compose up -d --build
+docker compose ps
 ```
 
-**Windows (PowerShell):**
+La primera vez tarda varios minutos (compila los cinco servicios). Todo está listo cuando los servicios aparecen como `healthy` y `kafka-init` como terminado. Panel de Eureka: <http://localhost:8761>.
 
-```powershell
-psql -U postgres -c "CREATE USER core_user WITH PASSWORD 'core2026';"
-psql -U postgres -c "CREATE DATABASE bancoxyz_core OWNER core_user;"
-```
+Para detener: `docker compose down` (conserva los datos) o `docker compose down -v` (borra también las bases de datos).
 
-### 2. Levantar Kafka y la base de datos de movimientos
+### Probar
+
+Los comandos son para bash o zsh; requieren `curl` y `jq`. Los certificados de core-api y movimientos son autofirmados (opción `-k` de `curl`). Los tokens duran 5 minutos.
 
 ```bash
-docker compose up -d
-```
+# Obtener tokens
+CAJERO=$(curl -s -u cliente-cajero:cajero-secret-2026 -d grant_type=client_credentials \
+  -d scope="cuentas.leer cuentas.retirar" http://localhost:9000/oauth2/token | jq -r .access_token)
+CONSULTA=$(curl -s -u cliente-consulta:consulta-secret-2026 -d grant_type=client_credentials \
+  -d scope="cuentas.leer movimientos.leer" http://localhost:9000/oauth2/token | jq -r .access_token)
 
-### 3. Arrancar los servicios
+# Sin token: 401
+curl -k -i https://localhost:8080/api/cuentas/101
 
-Cada uno en su propia terminal, desde la carpeta del módulo y en este orden: `config-server`, `service-registry`, `core-api`, `movimientos`.
+# Consultar una cuenta
+curl -k -H "Authorization: Bearer $CONSULTA" https://localhost:8080/api/cuentas/101
 
-| Sistema | Comando |
-|---|---|
-| Linux | `../mvnw spring-boot:run` |
-| Windows | `..\mvnw.cmd spring-boot:run` |
-
-Para levantar instancias adicionales de movimientos, se indica otro puerto:
-
-```bash
-../mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=8082
-```
-
-### 4. Probar
-
-Todas las solicitudes a core-api y movimientos requieren la cabecera `X-Internal-Key`. Los certificados son autofirmados (en `curl`, opción `-k`; en Windows, usar `curl.exe`).
-
-```bash
-# Retiro: la respuesta incluye la cabecera X-Id-Operacion
-curl -k -i -X PATCH -H "X-Internal-Key: clave-interna-bancoxyz-2026" -H "Content-Type: application/json" \
+# Retiro con un cliente sin el scope cuentas.retirar: 403
+curl -k -i -X PATCH -H "Authorization: Bearer $CONSULTA" -H "Content-Type: application/json" \
   -d '{"monto":10}' https://localhost:8080/api/cuentas/101/retiro
 
-# Estado de las operaciones
-psql -h localhost -U core_user -d bancoxyz_core -c 'SELECT id_operacion, monto, estado FROM operaciones'
+# Retiro con el cajero: 200, con la cabecera X-Id-Operacion
+curl -k -i -X PATCH -H "Authorization: Bearer $CAJERO" -H "Content-Type: application/json" \
+  -d '{"monto":10}' https://localhost:8080/api/cuentas/101/retiro
 
-# Probar la compensación: detener la base de datos de movimientos y repetir el retiro
-docker stop postgres-movimientos
-docker start postgres-movimientos
+# El mismo retiro, registrado por movimientos (reemplazar <idOperacion>)
+curl -k -H "Authorization: Bearer $CONSULTA" https://localhost:8081/api/movimientos/<idOperacion>
 
-# Reparto de particiones entre las instancias de movimientos
-docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group movimientos
+# Estado de las operaciones en core-api (contraseña: core2026)
+psql -h localhost -p 5434 -U core_user -d bancoxyz_core -c 'SELECT id_operacion, monto, estado FROM operaciones'
 ```
+
+**Compensación desde movimientos:** `docker stop postgres-movimientos`, hacer un retiro y esperar los reintentos; la operación queda `REVERTIDA`. Luego `docker start postgres-movimientos`.
+
+**Circuit Breaker de core-api:** `docker stop kafka` y hacer tres retiros seguidos (los dos primeros tardan por los reintentos; el tercero se rechaza al instante). Luego `docker start kafka`, esperar unos 30 s y repetir un retiro.
+
+### Ejecución sin Docker (desarrollo)
+
+Requiere Java 21, un PostgreSQL local con la base `bancoxyz_core` (usuario `core_user`, contraseña `core2026`) y la infraestructura levantada con `docker compose up -d kafka kafka-init postgres-movimientos`. Luego, cada servicio en su terminal y en este orden: `config-server`, `service-registry`, `auth-server`, `core-api`, `movimientos`, con `../mvnw spring-boot:run` desde la carpeta del módulo (en Windows, `..\mvnw.cmd spring-boot:run`). Sin variables de entorno, todo usa `localhost`.
 
 ## Retroalimentación aplicada de semanas anteriores
 
 - **Sin BFF ni Batch**, según el alcance indicado para la Experiencia 3. Los datos que pobló el Batch se conservan como migración Flyway.
 - **Esquema versionado con Flyway** en ambos microservicios.
-- **Validación del retiro** (monto obligatorio, positivo y con hasta 2 decimales) y **errores en formato `ProblemDetail`** (RFC 9457), con `ResponseEntity` en los controladores.
-- **Actuator** (`health`, `info`, `metrics`) protegido por la clave interna, y **pool de conexiones y timeouts** documentados en el Config Server.
-- **core-api y movimientos registrados en Eureka.** La comunicación entre ambos es por Kafka, no por HTTP, así que no se usa descubrimiento para llamadas directas.
-- **Parámetros del Retry externalizados** y reintento **solo ante errores transitorios**.
+- **Validación del retiro** y **errores en formato `ProblemDetail`** (RFC 9457), con `ResponseEntity` en los controladores.
+- **Actuator protegido:** la clave interna `X-Internal-Key` de la semana 7 se reemplazó por OAuth 2.0; `health` queda público sin detalles para los healthchecks.
+- **Parámetros de Resilience4j externalizados** y reintento **solo ante errores transitorios**, ahora en ambos microservicios.
 
 ## Limitaciones conocidas
 
+- **Credenciales y secretos en el repositorio** (contraseñas, secretos de los clientes OAuth guardados sin cifrar con `{noop}`, claves del keystore). Aceptable solo en este entorno académico; en producción irían en un gestor de secretos.
+- **`auth-server` usa HTTP, no HTTPS.** Con HTTPS, core-api y movimientos tendrían que confiar en un certificado autofirmado emitido para `auth-server`, lo que requiere truststores y un certificado nuevo. En producción, el TLS suele terminarlo un gateway o balanceador.
+- **La clave de firma de los tokens se genera en cada arranque de `auth-server`:** si se reinicia, los tokens emitidos antes dejan de ser válidos y hay que pedir uno nuevo.
+- **Kafka sin autenticación ni cifrado:** los eventos viajan dentro de la red de Docker.
+- **Ventana entre el débito y la compensación en core-api:** si core-api se cae justo después de descontar y antes de publicar o compensar, la operación queda `PENDIENTE`. La solución formal es el patrón *Transactional Outbox* (guardar el evento en la misma transacción que el débito y publicarlo aparte).
+- **Operaciones pendientes indefinidamente** si movimientos nunca responde. Se resolvería con un tiempo límite que dispare la compensación.
 - **El monto usa `Double`.** Para dinero lo correcto es `BigDecimal`; se mantuvo `Double` por coherencia con el código existente.
-- **Doble escritura en core-api:** el débito se guarda y luego se publica el evento. Si la publicación falla, queda un débito sin evento. La solución formal es el patrón *Transactional Outbox*.
-- **Operaciones pendientes indefinidamente:** si movimientos nunca responde, la operación queda `PENDIENTE`. Se resolvería con un tiempo límite que dispare la compensación.
-- **Credenciales en el repositorio:** contraseñas y claves están en los archivos de configuración, aceptable solo para desarrollo local.
+- **El estado del Circuit Breaker no se expone en `/actuator/health`:** el indicador de salud de Resilience4j está construido para Spring Boot 3, y no se verificó su compatibilidad con Boot 4. Los cambios de estado se registran en el log.
