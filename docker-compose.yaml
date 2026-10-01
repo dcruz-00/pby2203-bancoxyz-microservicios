@@ -1,13 +1,16 @@
-# Infraestructura de la S7: Kafka (KRaft) y PostgreSQL de movimientos.
-# Uso: docker compose up -d
+# Orquestación completa de BancoXYZ: infraestructura + microservicios.
+# Uso: docker compose up -d --build
 
 services:
+
+  # ---------- Infraestructura ----------
+
   kafka:
     image: apache/kafka:4.2.0
     container_name: kafka
     hostname: kafka
     ports:
-      - "9092:9092"   # Acceso desde el equipo (core-api, movimientos)
+      - "9092:9092"   # Acceso desde el equipo (depuración)
     environment:
       CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
       KAFKA_NODE_ID: 1
@@ -49,6 +52,23 @@ services:
         $$T --bootstrap-server $$B --create --if-not-exists --topic movimiento-fallido    --partitions 1 --replication-factor 1
         echo "Tópicos listos"
 
+  postgres-core:
+    image: postgres:18
+    container_name: postgres-core
+    ports:
+      - "5434:5432"   # 5434 en el equipo para no chocar con el PostgreSQL local
+    environment:
+      POSTGRES_DB: bancoxyz_core
+      POSTGRES_USER: core_user
+      POSTGRES_PASSWORD: core2026
+    volumes:
+      - core-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U core_user -d bancoxyz_core"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   postgres-movimientos:
     image: postgres:18
     container_name: postgres-movimientos
@@ -60,6 +80,104 @@ services:
       POSTGRES_PASSWORD: movimientos2026
     volumes:
       - movimientos-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U movimientos_user -d movimientos_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------- Plataforma Spring Cloud ----------
+
+  config-server:
+    build:
+      context: .
+      dockerfile: config-server/Dockerfile
+    image: bancoxyz/config-server
+    container_name: config-server
+    ports:
+      - "8888:8888"
+    restart: unless-stopped
+    healthcheck:
+      # Sano = ya sirve configuración (no solo "proceso iniciado")
+      test: ["CMD", "curl", "-fs", "-o", "/dev/null", "http://localhost:8888/core-api/default"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  service-registry:
+    build:
+      context: .
+      dockerfile: service-registry/Dockerfile
+    image: bancoxyz/service-registry
+    container_name: service-registry
+    ports:
+      - "8761:8761"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "-o", "/dev/null", "http://localhost:8761/eureka/apps"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # ---------- Microservicios ----------
+
+  core-api:
+    build:
+      context: .
+      dockerfile: core-api/Dockerfile
+    image: bancoxyz/core-api
+    container_name: core-api
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      CONFIG_SERVER_URL: http://config-server:8888
+    depends_on:
+      config-server:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+      postgres-core:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      # -k: certificado autofirmado
+      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "-H", "X-Internal-Key: clave-interna-bancoxyz-2026", "https://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  movimientos:
+    # Sin container_name ni puerto publicado: se puede escalar con --scale
+    build:
+      context: .
+      dockerfile: movimientos/Dockerfile
+    image: bancoxyz/movimientos
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      CONFIG_SERVER_URL: http://config-server:8888
+    depends_on:
+      config-server:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+      postgres-movimientos:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "-H", "X-Internal-Key: clave-interna-bancoxyz-2026", "https://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
 volumes:
+  core-data:
   movimientos-data:
