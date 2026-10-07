@@ -11,8 +11,8 @@
     <modules>
         <module>config-server</module>
         <module>service-registry</module>
-        <module>core-api</module>
-        <module>movimientos</module>
+        <module>cuentas</module>
+        <module>pagos</module>
         <module>auth-server</module>
     </modules>
 </project>

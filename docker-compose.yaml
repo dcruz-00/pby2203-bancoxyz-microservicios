@@ -52,36 +52,36 @@ services:
         $$T --bootstrap-server $$B --create --if-not-exists --topic movimiento-fallido    --partitions 1 --replication-factor 1
         echo "Tópicos listos"
 
-  postgres-core:
+  postgres-cuentas:
     image: postgres:18
-    container_name: postgres-core
+    container_name: postgres-cuentas
     ports:
       - "5434:5432"   # 5434 en el equipo para no chocar con el PostgreSQL local
     environment:
-      POSTGRES_DB: bancoxyz_core
-      POSTGRES_USER: core_user
-      POSTGRES_PASSWORD: core2026
+      POSTGRES_DB: cuentas_db
+      POSTGRES_USER: cuentas_user
+      POSTGRES_PASSWORD: cuentas2026
     volumes:
-      - core-data:/var/lib/postgresql
+      - cuentas-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U core_user -d bancoxyz_core"]
+      test: ["CMD-SHELL", "pg_isready -U cuentas_user -d cuentas_db"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  postgres-movimientos:
+  postgres-pagos:
     image: postgres:18
-    container_name: postgres-movimientos
+    container_name: postgres-pagos
     ports:
       - "5433:5432"   # 5433 en el equipo para no chocar con el PostgreSQL local
     environment:
-      POSTGRES_DB: movimientos_db
-      POSTGRES_USER: movimientos_user
-      POSTGRES_PASSWORD: movimientos2026
+      POSTGRES_DB: pagos_db
+      POSTGRES_USER: pagos_user
+      POSTGRES_PASSWORD: pagos2026
     volumes:
-      - movimientos-data:/var/lib/postgresql
+      - pagos-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U movimientos_user -d movimientos_db"]
+      test: ["CMD-SHELL", "pg_isready -U pagos_user -d pagos_db"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -99,7 +99,7 @@ services:
     restart: unless-stopped
     healthcheck:
       # Sano = ya sirve configuración (no solo "proceso iniciado")
-      test: ["CMD", "curl", "-fs", "-o", "/dev/null", "http://localhost:8888/core-api/default"]
+      test: ["CMD", "curl", "-fs", "-o", "/dev/null", "http://localhost:8888/cuentas/default"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -147,12 +147,12 @@ services:
 
   # ---------- Microservicios ----------
 
-  core-api:
+  cuentas:
     build:
       context: .
-      dockerfile: core-api/Dockerfile
-    image: bancoxyz/core-api
-    container_name: core-api
+      dockerfile: cuentas/Dockerfile
+    image: bancoxyz/cuentas
+    container_name: cuentas
     ports:
       - "8080:8080"
     environment:
@@ -165,7 +165,7 @@ services:
         condition: service_healthy
       service-registry:
         condition: service_healthy
-      postgres-core:
+      postgres-cuentas:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -178,14 +178,14 @@ services:
       retries: 12
       start_period: 30s
 
-  movimientos:
-    container_name: movimientos
+  pagos:
+    container_name: pagos
     ports:
       - "8081:8081"
     build:
       context: .
-      dockerfile: movimientos/Dockerfile
-    image: bancoxyz/movimientos
+      dockerfile: pagos/Dockerfile
+    image: bancoxyz/pagos
     environment:
       SPRING_PROFILES_ACTIVE: docker
       CONFIG_SERVER_URL: http://config-server:8888
@@ -194,7 +194,7 @@ services:
         condition: service_healthy
       service-registry:
         condition: service_healthy
-      postgres-movimientos:
+      postgres-pagos:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
@@ -209,5 +209,5 @@ services:
       start_period: 30s
 
 volumes:
-  core-data:
-  movimientos-data:
+  cuentas-data:
+  pagos-data:
