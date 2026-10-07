@@ -9,13 +9,12 @@ import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
 
+/** Circuit Breaker de las llamadas a cuentas. */
 @Configuration
 public class ResilienceConfig {
 
-    public static final String CORE_API_CB = "core-api";
-
     @Bean
-    public Customizer<Resilience4JCircuitBreakerFactory> coreApiCircuitBreakerCustomizer() {
+    public Customizer<Resilience4JCircuitBreakerFactory> circuitBreakerCustomizer() {
         return factory -> factory.configure(builder -> builder
                 .circuitBreakerConfig(CircuitBreakerConfig.custom()
                         .slidingWindowSize(5)
@@ -25,8 +24,8 @@ public class ResilienceConfig {
                         .permittedNumberOfCallsInHalfOpenState(2)
                         .build())
                 .timeLimiterConfig(TimeLimiterConfig.custom()
-                        .timeoutDuration(Duration.ofSeconds(5))
+                        .timeoutDuration(Duration.ofSeconds(6))
                         .build()),
-                CORE_API_CB);
+                "cuentas");
     }
 }

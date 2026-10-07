@@ -1,42 +1,57 @@
 package com.bancoxyz.bffcajeros.controller;
 
+import com.bancoxyz.bffcajeros.config.OperacionRechazadaException;
 import com.bancoxyz.bffcajeros.model.CuentaCajeroDTO;
 import com.bancoxyz.bffcajeros.model.RetiroCajeroRequest;
-import org.springframework.http.HttpStatusCode;
+import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestClient;
 
+/**
+ * Cajeros automáticos: solo consulta de saldo y retiro, con la respuesta mínima
+ * (cuenta y saldo) y un monto máximo por retiro.
+ */
 @RestController
 @RequestMapping("/cajero")
 public class CajeroController {
 
-    private final RestClient coreApiClient;
+    private final RestClient cuentasClient;
+    private final double limitePorRetiro;
 
-    public CajeroController(RestClient coreApiClient) {
-        this.coreApiClient = coreApiClient;
+    public CajeroController(@Qualifier("cuentasClient") RestClient cuentasClient,
+                            @Value("${bff.limite-por-operacion}") double limitePorRetiro) {
+        this.cuentasClient = cuentasClient;
+        this.limitePorRetiro = limitePorRetiro;
     }
 
     @GetMapping("/cuentas/{cuentaId}/saldo")
     public CuentaCajeroDTO consultarSaldo(@PathVariable Long cuentaId) {
-        return coreApiClient.get()
+        return cuentasClient.get()
                 .uri("/api/cuentas/{id}", cuentaId)
                 .retrieve()
                 .body(CuentaCajeroDTO.class);
     }
 
+    /** El retiro inicia la saga en cuentas; el cajero recibe solo el saldo resultante. */
     @PatchMapping("/cuentas/{cuentaId}/retiro")
-    public ResponseEntity<?> retirar(@PathVariable Long cuentaId, @RequestBody RetiroCajeroRequest request) {
-        return coreApiClient.patch()
+    public ResponseEntity<CuentaCajeroDTO> retirar(@PathVariable Long cuentaId,
+                                                   @Valid @RequestBody RetiroCajeroRequest request) {
+        if (request.monto() > limitePorRetiro) {
+            throw new OperacionRechazadaException("El monto supera el máximo por retiro en cajero ("
+                    + limitePorRetiro + ")");
+        }
+        ResponseEntity<CuentaCajeroDTO> respuesta = cuentasClient.patch()
                 .uri("/api/cuentas/{id}/retiro", cuentaId)
-                .body(new RetiroCajeroRequest(request.monto()))
-                .exchange((req, res) -> {
-                    if (res.getStatusCode().isError()) {
-                        String mensaje = new String(res.getBody().readAllBytes());
-                        return ResponseEntity.status(res.getStatusCode()).body(mensaje);
-                    }
-                    CuentaCajeroDTO cuenta = res.bodyTo(CuentaCajeroDTO.class);
-                    return ResponseEntity.ok(cuenta);
-                });
+                .body(request)
+                .retrieve()
+                .toEntity(CuentaCajeroDTO.class);
+        // Respuesta nueva (no se reenvían las cabeceras de cuentas, como Content-Length,
+        // que corresponden al cuerpo completo); solo se conserva el id de operación
+        return ResponseEntity.ok()
+                .header("X-Id-Operacion", respuesta.getHeaders().getFirst("X-Id-Operacion"))
+                .body(respuesta.getBody());
     }
 }

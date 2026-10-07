@@ -15,5 +15,9 @@
         <module>pagos</module>
         <module>clientes</module>
         <module>auth-server</module>
+        <module>gateway</module>
+        <module>bff-web</module>
+        <module>bff-movil</module>
+        <module>bff-cajeros</module>
     </modules>
 </project>
