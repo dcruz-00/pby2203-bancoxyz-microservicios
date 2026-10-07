@@ -1,5 +1,24 @@
-# Orquestación completa de BancoXYZ: infraestructura + microservicios.
-# Uso: docker compose up -d --build
+# Orquestación completa de BancoXYZ: infraestructura, plataforma Spring Cloud,
+# microservicios, BFF, gateway y procesos batch.
+#
+# Uso:        docker compose up -d --build
+# Escalado:   docker compose -f docker-compose.yaml -f docker-compose.escalado.yaml up -d \
+#               --scale cuentas=2 --scale pagos=2 --scale clientes=2
+#
+# cuentas, pagos y clientes no tienen container_name para poder levantar varias
+# réplicas; cada réplica se registra en Eureka y recibe tráfico por balanceo de carga.
+
+x-spring-docker: &spring-docker
+  SPRING_PROFILES_ACTIVE: docker
+  CONFIG_SERVER_URL: http://config-server:8888
+
+x-depende-de-plataforma: &depende-de-plataforma
+  config-server:
+    condition: service_healthy
+  service-registry:
+    condition: service_healthy
+  auth-server:
+    condition: service_healthy
 
 services:
 
@@ -42,16 +61,20 @@ services:
       kafka:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
+    # Los tópicos con 3 particiones permiten repartir el consumo entre réplicas
     command:
       - |
         set -e
         T=/opt/kafka/bin/kafka-topics.sh
         B=kafka:29092
-        $$T --bootstrap-server $$B --create --if-not-exists --topic retiro-realizado      --partitions 3 --replication-factor 1
-        $$T --bootstrap-server $$B --create --if-not-exists --topic movimiento-registrado --partitions 1 --replication-factor 1
-        $$T --bootstrap-server $$B --create --if-not-exists --topic movimiento-fallido    --partitions 1 --replication-factor 1
+        $$T --bootstrap-server $$B --create --if-not-exists --topic retiro-realizado       --partitions 3 --replication-factor 1
+        $$T --bootstrap-server $$B --create --if-not-exists --topic movimiento-registrado  --partitions 1 --replication-factor 1
+        $$T --bootstrap-server $$B --create --if-not-exists --topic movimiento-fallido     --partitions 1 --replication-factor 1
+        $$T --bootstrap-server $$B --create --if-not-exists --topic transaccion-completada --partitions 3 --replication-factor 1
+        $$T --bootstrap-server $$B --create --if-not-exists --topic alerta-seguridad       --partitions 1 --replication-factor 1
         echo "Tópicos listos"
 
+  # Una base de datos por microservicio (y otra para el Batch)
   postgres-cuentas:
     image: postgres:18
     container_name: postgres-cuentas
@@ -73,7 +96,7 @@ services:
     image: postgres:18
     container_name: postgres-pagos
     ports:
-      - "5433:5432"   # 5433 en el equipo para no chocar con el PostgreSQL local
+      - "5433:5432"
     environment:
       POSTGRES_DB: pagos_db
       POSTGRES_USER: pagos_user
@@ -82,6 +105,40 @@ services:
       - pagos-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pagos_user -d pagos_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-clientes:
+    image: postgres:18
+    container_name: postgres-clientes
+    ports:
+      - "5435:5432"
+    environment:
+      POSTGRES_DB: clientes_db
+      POSTGRES_USER: clientes_user
+      POSTGRES_PASSWORD: clientes2026
+    volumes:
+      - clientes-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clientes_user -d clientes_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-batch:
+    image: postgres:18
+    container_name: postgres-batch
+    ports:
+      - "5436:5432"
+    environment:
+      POSTGRES_DB: batch_db
+      POSTGRES_USER: batch_user
+      POSTGRES_PASSWORD: batch2026
+    volumes:
+      - batch-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U batch_user -d batch_db"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -145,6 +202,28 @@ services:
       retries: 20
       start_period: 10s
 
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    image: bancoxyz/gateway
+    container_name: gateway
+    ports:
+      - "8443:8443"   # Punto de entrada único para los frontends (HTTPS)
+    environment:
+      EUREKA_URL: http://service-registry:8761/eureka/
+      EUREKA_HOSTNAME: gateway
+    depends_on:
+      service-registry:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "https://localhost:8443/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
   # ---------- Microservicios ----------
 
   cuentas:
@@ -152,19 +231,11 @@ services:
       context: .
       dockerfile: cuentas/Dockerfile
     image: bancoxyz/cuentas
-    container_name: cuentas
     ports:
-      - "8080:8080"
-    environment:
-      SPRING_PROFILES_ACTIVE: docker
-      CONFIG_SERVER_URL: http://config-server:8888
+      - "8080:8080"   # Pruebas directas; con réplicas, ver docker-compose.escalado.yaml
+    environment: *spring-docker
     depends_on:
-      config-server:
-        condition: service_healthy
-      auth-server:
-        condition: service_healthy
-      service-registry:
-        condition: service_healthy
+      <<: *depende-de-plataforma
       postgres-cuentas:
         condition: service_healthy
       kafka-init:
@@ -179,27 +250,19 @@ services:
       start_period: 30s
 
   pagos:
-    container_name: pagos
-    ports:
-      - "8081:8081"
     build:
       context: .
       dockerfile: pagos/Dockerfile
     image: bancoxyz/pagos
-    environment:
-      SPRING_PROFILES_ACTIVE: docker
-      CONFIG_SERVER_URL: http://config-server:8888
+    ports:
+      - "8081:8081"
+    environment: *spring-docker
     depends_on:
-      config-server:
-        condition: service_healthy
-      service-registry:
-        condition: service_healthy
+      <<: *depende-de-plataforma
       postgres-pagos:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
-      auth-server:
-        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "https://localhost:8081/actuator/health"]
@@ -208,6 +271,108 @@ services:
       retries: 12
       start_period: 30s
 
+  clientes:
+    build:
+      context: .
+      dockerfile: clientes/Dockerfile
+    image: bancoxyz/clientes
+    ports:
+      - "8084:8084"
+    environment: *spring-docker
+    depends_on:
+      <<: *depende-de-plataforma
+      postgres-clientes:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "https://localhost:8084/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ---------- Backend for Frontend ----------
+  # No dependen de los microservicios: arrancan solos y, si un servicio no está,
+  # responden 503 o con datos parciales (Circuit Breaker).
+
+  bff-web:
+    build:
+      context: .
+      dockerfile: bff-web/Dockerfile
+    image: bancoxyz/bff-web
+    container_name: bff-web
+    ports:
+      - "8091:8091"
+    environment: *spring-docker
+    depends_on: *depende-de-plataforma
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "https://localhost:8091/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  bff-movil:
+    build:
+      context: .
+      dockerfile: bff-movil/Dockerfile
+    image: bancoxyz/bff-movil
+    container_name: bff-movil
+    ports:
+      - "8092:8092"
+    environment: *spring-docker
+    depends_on: *depende-de-plataforma
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "https://localhost:8092/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  bff-cajeros:
+    build:
+      context: .
+      dockerfile: bff-cajeros/Dockerfile
+    image: bancoxyz/bff-cajeros
+    container_name: bff-cajeros
+    ports:
+      - "8093:8093"
+    environment: *spring-docker
+    depends_on: *depende-de-plataforma
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "-o", "/dev/null", "https://localhost:8093/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ---------- Procesos batch ----------
+  # Se ejecuta al levantar el sistema y termina. Si un job falla de forma
+  # persistente, sale con código 1 y Docker lo reintenta hasta 3 veces.
+  # Ejecución manual: docker compose run --rm batch-jobs
+
+  batch-jobs:
+    build:
+      context: .
+      dockerfile: batch-jobs/Dockerfile
+    image: bancoxyz/batch-jobs
+    container_name: batch-jobs
+    environment:
+      BATCH_DB_URL: jdbc:postgresql://postgres-batch:5432/batch_db
+      BATCH_DB_USER: batch_user
+      BATCH_DB_PASSWORD: batch2026
+    depends_on:
+      postgres-batch:
+        condition: service_healthy
+    restart: on-failure:3
+
 volumes:
   cuentas-data:
   pagos-data:
+  clientes-data:
+  batch-data:

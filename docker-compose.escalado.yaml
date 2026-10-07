@@ -1,0 +1,17 @@
+# Escalado horizontal de los microservicios (se usa junto a docker-compose.yaml):
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.escalado.yaml up -d \
+#     --scale cuentas=2 --scale pagos=2 --scale clientes=2
+#
+# Varias réplicas no pueden publicar el mismo puerto del equipo, así que aquí se
+# quitan los puertos de cuentas, pagos y clientes. Se accede a ellos a través del
+# gateway y los BFF, que reparten las solicitudes entre las réplicas registradas
+# en Eureka. Requiere Docker Compose 2.24 o superior (etiqueta !reset).
+
+services:
+  cuentas:
+    ports: !reset []
+  pagos:
+    ports: !reset []
+  clientes:
+    ports: !reset []

@@ -10,4 +10,4 @@
 
 # No se usan dentro de las imágenes (evita invalidar la caché al editarlos)
 **/*.md
-docker-compose.yaml
+docker-compose*.yaml
