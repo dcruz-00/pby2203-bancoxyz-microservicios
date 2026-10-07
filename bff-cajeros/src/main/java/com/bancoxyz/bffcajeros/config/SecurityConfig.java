@@ -1,5 +1,6 @@
 package com.bancoxyz.bffcajeros.config;
 
+import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -42,7 +43,9 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .authorizeHttpRequests(auth -> auth
-                    // Healthcheck de Docker y del gateway
+                    // Redirección interna a /error: sin esto, un error real llegaría como 401/403
+                    .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                    // Healthcheck de Docker
                     .requestMatchers("/actuator/health/**").permitAll()
                     .requestMatchers("/cajero/**").hasRole("CAJERO")
                     .anyRequest().denyAll()
