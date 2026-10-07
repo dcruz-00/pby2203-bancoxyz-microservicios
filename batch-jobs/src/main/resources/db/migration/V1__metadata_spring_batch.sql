@@ -1,10 +1,5 @@
--- Esquema de metadata de Spring Batch 6 para PostgreSQL
--- es un script oficial de Spring Batch (spring-batch-core), adaptado para
--- creación manual ante un bug conocido de spring.batch.jdbc.initialize-schema
--- en esta combinación de versiones (Spring Boot 4.1 / Spring Batch 6).
---
--- Hay que ejecutarlo una sola vez contra la BD del proyecto,
--- antes de correr cualquier job por primera vez.
+-- Esquema de metadatos de Spring Batch 6 para PostgreSQL (script oficial de spring-batch-core).
+-- Lo crea Flyway al arrancar: con @EnableBatchProcessing, Spring Boot no inicializa este esquema.
 
 CREATE TABLE BATCH_JOB_INSTANCE (
     JOB_INSTANCE_ID BIGINT NOT NULL PRIMARY KEY,

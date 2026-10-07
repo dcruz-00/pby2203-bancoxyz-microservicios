@@ -19,5 +19,6 @@
         <module>bff-web</module>
         <module>bff-movil</module>
         <module>bff-cajeros</module>
+        <module>batch-jobs</module>
     </modules>
 </project>

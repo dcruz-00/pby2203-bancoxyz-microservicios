@@ -11,6 +11,7 @@ public class CuentaInteres {
     private Double tasaAplicada;    
     private Double interesGenerado;
     private LocalDate fechaCalculo;
+    private String periodo;
 
     public CuentaInteres() {}
     public Long getCuentaId() {return cuentaId;}
@@ -29,6 +30,8 @@ public class CuentaInteres {
     public void setInteresGenerado(Double interesGenerado) {this.interesGenerado = interesGenerado;}
     public LocalDate getFechaCalculo() {return fechaCalculo;}
     public void setFechaCalculo(LocalDate fechaCalculo) {this.fechaCalculo = fechaCalculo;}
+    public String getPeriodo() {return periodo;}
+    public void setPeriodo(String periodo) {this.periodo = periodo;}
 
     @Override
     public String toString() {

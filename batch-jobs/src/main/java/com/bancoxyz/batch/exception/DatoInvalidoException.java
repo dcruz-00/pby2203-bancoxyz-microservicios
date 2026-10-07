@@ -1,17 +1,26 @@
 package com.bancoxyz.batch.exception;
 
 /**
- * Se lanza cuando un registro leído del CSV no cumple las reglas de
- * consistencia de datos definidas para el proceso (saldo inválido,
- * tipo no reconocido, fecha nula, etc.).
+ * Un registro del CSV no cumple las reglas de consistencia del proceso. El Step
+ * la omite (skip): el registro queda en registros_rechazados con su código y
+ * motivo, y el job continúa.
  *
- * Es unchecked (extiende RuntimeException) para no ensuciar la firma de
- * process() de los ItemProcessor. La usamos como "marcador" para que el
- * Step sepa qué excepciones puede omitir (skip) en vez de abortar el Job.
+ * @see com.bancoxyz.batch.listeners.RegistroRechazadoListener
  */
 public class DatoInvalidoException extends RuntimeException {
 
-    public DatoInvalidoException(String mensaje) {
+    private final String codigo;
+
+    /**
+     * @param codigo categoría del rechazo (por ejemplo, MONTO_VACIO o DUPLICADO),
+     *               para poder contar los rechazos por tipo
+     */
+    public DatoInvalidoException(String codigo, String mensaje) {
         super(mensaje);
+        this.codigo = codigo;
+    }
+
+    public String getCodigo() {
+        return codigo;
     }
 }
