@@ -3,6 +3,7 @@ package com.bancoxyz.pagos.kafka;
 import com.bancoxyz.pagos.config.KafkaTopics;
 import com.bancoxyz.pagos.event.MovimientoFallidoEvent;
 import com.bancoxyz.pagos.event.MovimientoRegistradoEvent;
+import com.bancoxyz.pagos.event.TransaccionCompletadaEvent;
 import tools.jackson.databind.json.JsonMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +29,11 @@ public class EventoPublisher {
 
     public void publicarFallido(MovimientoFallidoEvent evento) {
         enviar(KafkaTopics.MOVIMIENTO_FALLIDO, evento.cuentaId().toString(), evento);
+    }
+
+    /** La clave es la cuenta: los eventos de una misma cuenta llegan en orden. */
+    public void publicarTransaccion(TransaccionCompletadaEvent evento) {
+        enviar(KafkaTopics.TRANSACCION_COMPLETADA, evento.cuentaId().toString(), evento);
     }
 
     private void enviar(String topic, String key, Object payload) {

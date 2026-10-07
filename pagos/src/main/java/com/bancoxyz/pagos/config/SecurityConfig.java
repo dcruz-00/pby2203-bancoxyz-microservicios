@@ -10,8 +10,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
- * pagos como resource server OAuth 2.0: la consulta de movimientos exige
- * un JWT válido emitido por auth-server con el scope "pagos.leer".
+ * pagos como resource server OAuth 2.0: consultar pagos y movimientos exige
+ * "pagos.leer"; realizar depósitos, pagos y transferencias exige "pagos.operar".
  */
 @Configuration
 public class SecurityConfig {
@@ -26,8 +26,11 @@ public class SecurityConfig {
                 // Abierto para los healthchecks de Docker (sin detalles para anónimos)
                 .requestMatchers("/actuator/health/**").permitAll()
                 .requestMatchers("/actuator/**").hasAuthority("SCOPE_monitoreo")
-                .requestMatchers(HttpMethod.GET, "/api/movimientos", "/api/movimientos/*")
+                .requestMatchers(HttpMethod.GET, "/api/movimientos", "/api/movimientos/*", "/api/pagos", "/api/pagos/*")
                     .hasAuthority("SCOPE_pagos.leer")
+                .requestMatchers(HttpMethod.POST, "/api/pagos/depositos", "/api/pagos/servicios",
+                        "/api/pagos/transferencias")
+                    .hasAuthority("SCOPE_pagos.operar")
                 // Todo lo que no esté listado arriba se deniega
                 .anyRequest().denyAll())
             .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
