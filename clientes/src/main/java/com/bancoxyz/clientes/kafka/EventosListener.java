@@ -39,7 +39,7 @@ public class EventosListener {
     @KafkaListener(topics = KafkaTopics.TRANSACCION_COMPLETADA, groupId = "clientes")
     public void alCompletarTransaccion(String mensaje) {
         TransaccionCompletadaEvento evento = leer(mensaje, TransaccionCompletadaEvento.class);
-        if (evento == null) {
+        if (evento == null || evento.tipo() == null) {
             return;
         }
         String monto = formatear(evento.monto());
