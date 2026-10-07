@@ -1,0 +1,21 @@
+package com.bancoxyz.clientes.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.util.backoff.FixedBackOff;
+
+@Configuration
+public class KafkaConfig {
+
+    /**
+     * Si guardar una notificación falla (por ejemplo, la base de datos está caída),
+     * el mensaje se reintenta 5 veces con 2 s de pausa antes de descartarlo y
+     * registrarlo en el log. Spring Boot aplica este manejador a todos los
+     * @KafkaListener.
+     */
+    @Bean
+    DefaultErrorHandler kafkaErrorHandler() {
+        return new DefaultErrorHandler(new FixedBackOff(2000L, 5L));
+    }
+}
