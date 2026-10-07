@@ -16,10 +16,40 @@ public class OperacionRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    /** Operación registrada, usada para reconocer reintentos de pagos. */
+    public record Operacion(UUID idOperacion, String tipo, Long cuentaId, Long cuentaDestinoId, Double monto,
+                            String estado) {
+    }
+
     public void crearPendiente(UUID idOperacion, Long cuentaId, Double monto) {
         jdbcTemplate.update(
-                "INSERT INTO operaciones (id_operacion, cuenta_id, monto, estado) VALUES (?, ?, ?, 'PENDIENTE')",
+                "INSERT INTO operaciones (id_operacion, tipo, cuenta_id, monto, estado) "
+                        + "VALUES (?, 'RETIRO', ?, ?, 'PENDIENTE')",
                 idOperacion, cuentaId, monto);
+    }
+
+    /** Registra un depósito, pago o transferencia ya aplicado (lo solicita pagos de forma síncrona). */
+    public void crearAplicada(UUID idOperacion, String tipo, Long cuentaId, Long cuentaDestinoId, Double monto) {
+        jdbcTemplate.update(
+                "INSERT INTO operaciones (id_operacion, tipo, cuenta_id, cuenta_destino, monto, estado) "
+                        + "VALUES (?, ?, ?, ?, ?, 'APLICADA')",
+                idOperacion, tipo, cuentaId, cuentaDestinoId, monto);
+    }
+
+    public Optional<Operacion> buscar(UUID idOperacion) {
+        return jdbcTemplate.query(
+                "SELECT id_operacion, tipo, cuenta_id, cuenta_destino, monto, estado FROM operaciones "
+                        + "WHERE id_operacion = ?",
+                (rs, rowNum) -> new Operacion(
+                        rs.getObject("id_operacion", UUID.class),
+                        rs.getString("tipo"),
+                        rs.getLong("cuenta_id"),
+                        rs.getObject("cuenta_destino", Long.class),
+                        rs.getDouble("monto"),
+                        rs.getString("estado")),
+                idOperacion)
+                .stream()
+                .findFirst();
     }
 
     public record OperacionRevertida(Long cuentaId, Double monto) {

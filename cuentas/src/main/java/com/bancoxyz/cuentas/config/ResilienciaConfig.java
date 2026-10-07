@@ -5,15 +5,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Configuration;
 
-/** Registra en el log cada cambio de estado del circuito de retiros. */
+/** Registra en el log cada cambio de estado de los circuitos (retiros y consulta a clientes). */
 @Configuration
 public class ResilienciaConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ResilienciaConfig.class);
 
     public ResilienciaConfig(CircuitBreakerRegistry registry) {
-        registry.circuitBreaker("retiro").getEventPublisher()
-                .onStateTransition(evento -> log.warn("Circuit breaker '{}': {}",
-                        evento.getCircuitBreakerName(), evento.getStateTransition()));
+        for (String nombre : new String[] { "retiro", "clientes" }) {
+            registry.circuitBreaker(nombre).getEventPublisher()
+                    .onStateTransition(evento -> log.warn("Circuit breaker '{}': {}",
+                            evento.getCircuitBreakerName(), evento.getStateTransition()));
+        }
     }
 }

@@ -1,9 +1,9 @@
 package com.bancoxyz.cuentas.service;
 
 import com.bancoxyz.cuentas.exception.PublicacionEventoException;
-import com.bancoxyz.cuentas.model.CuentaInteresDTO;
+import com.bancoxyz.cuentas.model.CuentaDTO;
 import com.bancoxyz.cuentas.model.RetiroRealizadoEvento;
-import com.bancoxyz.cuentas.repository.CuentaInteresRepository;
+import com.bancoxyz.cuentas.repository.CuentaRepository;
 import com.bancoxyz.cuentas.repository.OperacionRepository;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.slf4j.Logger;
@@ -20,22 +20,25 @@ public class RetiroService {
 
     private static final Logger log = LoggerFactory.getLogger(RetiroService.class);
 
-    private final CuentaInteresRepository cuentaRepository;
+    private final CuentaRepository cuentaRepository;
     private final OperacionRepository operacionRepository;
     private final TransactionTemplate transactionTemplate;
     private final RetiroEventoPublisher publisher;
+    private final AlertaSeguridadPublisher alertaPublisher;
 
-    public RetiroService(CuentaInteresRepository cuentaRepository,
+    public RetiroService(CuentaRepository cuentaRepository,
                          OperacionRepository operacionRepository,
                          PlatformTransactionManager transactionManager,
-                         RetiroEventoPublisher publisher) {
+                         RetiroEventoPublisher publisher,
+                         AlertaSeguridadPublisher alertaPublisher) {
         this.cuentaRepository = cuentaRepository;
         this.operacionRepository = operacionRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.publisher = publisher;
+        this.alertaPublisher = alertaPublisher;
     }
 
-    public record Resultado(UUID idOperacion, CuentaInteresDTO cuenta) {
+    public record Resultado(UUID idOperacion, CuentaDTO cuenta) {
     }
 
     /**
@@ -48,8 +51,9 @@ public class RetiroService {
         UUID idOperacion = UUID.randomUUID();
 
         // Débito y operación PENDIENTE en una sola transacción: se guardan ambos o ninguno
-        CuentaInteresDTO cuenta = transactionTemplate.execute(status -> {
-            CuentaInteresDTO actualizada = cuentaRepository.retirar(cuentaId, monto);
+        CuentaDTO cuenta = transactionTemplate.execute(status -> {
+            // Débito condicionado: falla si la cuenta está cerrada o no tiene saldo suficiente
+            CuentaDTO actualizada = cuentaRepository.debitar(cuentaId, monto);
             operacionRepository.crearPendiente(idOperacion, cuentaId, monto);
             return actualizada;
         });
@@ -63,6 +67,7 @@ public class RetiroService {
             compensar(idOperacion);
             throw ex;
         }
+        alertaPublisher.revisarMonto("RETIRO", cuentaId, cuenta.clienteId(), monto);
         return new Resultado(idOperacion, cuenta);
     }
 

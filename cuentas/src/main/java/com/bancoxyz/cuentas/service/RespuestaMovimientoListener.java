@@ -1,7 +1,7 @@
 package com.bancoxyz.cuentas.service;
 
 import com.bancoxyz.cuentas.model.RespuestaMovimientoEvento;
-import com.bancoxyz.cuentas.repository.CuentaInteresRepository;
+import com.bancoxyz.cuentas.repository.CuentaRepository;
 import com.bancoxyz.cuentas.repository.OperacionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,12 +19,12 @@ public class RespuestaMovimientoListener {
     private static final Logger log = LoggerFactory.getLogger(RespuestaMovimientoListener.class);
 
     private final OperacionRepository operacionRepository;
-    private final CuentaInteresRepository cuentaRepository;
+    private final CuentaRepository cuentaRepository;
     private final TransactionTemplate transactionTemplate;
     private final JsonMapper jsonMapper;
 
     public RespuestaMovimientoListener(OperacionRepository operacionRepository,
-            CuentaInteresRepository cuentaRepository,
+            CuentaRepository cuentaRepository,
             PlatformTransactionManager transactionManager,
             JsonMapper jsonMapper) {
         this.operacionRepository = operacionRepository;
