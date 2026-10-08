@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.Locale;
+
 /**
  * Consume los eventos de transacciones (de pagos) y de alertas de seguridad (de
  * cuentas) y los convierte en notificaciones para el cliente.
@@ -24,6 +26,7 @@ import tools.jackson.databind.json.JsonMapper;
 public class EventosListener {
 
     private static final Logger log = LoggerFactory.getLogger(EventosListener.class);
+    private static final Locale PESOS_CHILENOS = Locale.of("es", "CL");
 
     private final ClienteRepository clienteRepository;
     private final NotificacionRepository notificacionRepository;
@@ -96,7 +99,8 @@ public class EventosListener {
         }
     }
 
+    /** Formato chileno: separador de miles "." y decimal "," (por ejemplo, $5.200,00). */
     private static String formatear(Double monto) {
-        return monto == null ? "-" : String.format("$%,.2f", monto);
+        return monto == null ? "-" : String.format(PESOS_CHILENOS, "$%,.2f", monto);
     }
 }

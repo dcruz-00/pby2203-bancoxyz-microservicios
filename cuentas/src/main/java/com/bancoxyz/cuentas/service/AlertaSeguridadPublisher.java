@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -39,8 +40,13 @@ public class AlertaSeguridadPublisher {
     public void revisarMonto(String operacion, Long cuentaId, Long clienteId, Double monto) {
         if (monto != null && monto >= umbralMonto) {
             publicar("MONTO_ELEVADO", cuentaId, clienteId, monto,
-                    operacion + " por " + monto + " (umbral " + umbralMonto + ")");
+                    operacion + " por " + formatear(monto) + " (umbral " + formatear(umbralMonto) + ")");
         }
+    }
+
+    /** Formato chileno: separador de miles "." y decimal "," (por ejemplo, $1.200,00). */
+    private static String formatear(double monto) {
+        return String.format(Locale.of("es", "CL"), "$%,.2f", monto);
     }
 
     public void publicar(String tipo, Long cuentaId, Long clienteId, Double monto, String detalle) {
