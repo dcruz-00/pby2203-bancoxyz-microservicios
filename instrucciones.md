@@ -387,7 +387,7 @@ docker compose run --rm -e BATCH_FECHA_PROCESO=2026-11-01 -e BATCH_SIMULAR_FALLO
 
 **Esperado**:
 
-1. Primera ejecución de `interesesMensualesJob`: `FAILED`, con la causa "Fallo crítico simulado en el registro 350" y 300 líneas procesadas (3 bloques confirmados).
+1. Primera ejecución de `interesesMensualesJob`: `FAILED`, con la causa "Fallo crítico simulado en el registro 350" y `commits=3`: los registros 1 a 300 quedan confirmados. El resumen del paso informa `líneas=400` porque el contador incluye el cuarto bloque, que se leyó completo y se revirtió al fallar; nada de ese bloque queda en la base de datos.
 2. "Reejecución automática en 5 s".
 3. Segunda ejecución de la misma instancia: `COMPLETED`, procesando solo las 700 líneas restantes (desde el registro 301), y el mensaje "COMPLETADO en el intento 2 tras reanudar la ejecución fallida".
 
