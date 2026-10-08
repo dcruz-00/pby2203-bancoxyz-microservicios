@@ -121,10 +121,10 @@ curl -sk -X POST https://localhost:8084/api/clientes \
 # Cuentas de un cliente
 curl -sk "https://localhost:8080/api/cuentas?clienteId=1" -H "Authorization: Bearer $TOKEN" | jq
 
-# Apertura para el cliente 7 (valida al titular en clientes)
+# Apertura de una cuenta corriente para el cliente 1 (valida al titular en clientes)
 curl -sk -X POST https://localhost:8080/api/cuentas \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"clienteId":7,"tipo":"ahorro","saldoInicial":0}' | jq
+  -d '{"clienteId":1,"tipo":"corriente","saldoInicial":0}' | jq
 
 # Cliente inexistente: 422
 curl -sk -o /dev/null -w "%{http_code}\n" -X POST https://localhost:8080/api/cuentas \
@@ -138,7 +138,7 @@ curl -sk -X PATCH https://localhost:8080/api/cuentas/1001/cierre -H "Authorizati
 curl -sk -X PATCH https://localhost:8080/api/cuentas/101/cierre -H "Authorization: Bearer $TOKEN" | jq
 ```
 
-**Esperado**: la cuenta nueva es la 1001, con el nombre y la edad del titular tomados de clientes. El cierre de la 101 responde 409 con el saldo actual.
+**Esperado**: la cuenta nueva es la 1001, con el nombre (John Doe) y la edad del titular tomados de clientes. El cierre de la 101 responde 409 con el saldo actual.
 
 ### 5.3 pagos (depósitos, pagos y transferencias)
 
@@ -191,9 +191,8 @@ curl -sk https://localhost:8084/api/clientes/2/notificaciones -H "Authorization:
 
 **Esperado**:
 
-- Cliente 1: notificaciones `DEPOSITO`, `PAGO`, `TRANSFERENCIA_ENVIADA` y `ALERTA_MONTO_ELEVADO` (la transferencia de 1200 superó el umbral de 1000).
+- Cliente 1: notificaciones `DEPOSITO`, `PAGO`, `TRANSFERENCIA_ENVIADA`, `ALERTA_MONTO_ELEVADO` (la transferencia de 1200 superó el umbral de 1000) y `ALERTA_CUENTA_CERRADA` (por el cierre de la cuenta 1001).
 - Cliente 2: `TRANSFERENCIA_RECIBIDA`.
-- Cliente 7: `ALERTA_CUENTA_CERRADA`, por el cierre de la cuenta 1001.
 
 Tópicos y grupos de consumidores:
 
